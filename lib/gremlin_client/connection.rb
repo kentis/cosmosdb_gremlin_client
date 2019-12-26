@@ -1,4 +1,6 @@
 require 'oj'
+require 'base64'
+
 module GremlinClient
   # represents the connection to our gremlin server
   class Connection
@@ -37,7 +39,9 @@ module GremlinClient
       connection_timeout: 1,
       timeout: 10,
       gremlin_script_path: '.',
-      autoconnect: true
+      autoconnect: true,
+      user_name: '',
+      password: ''
     )
       @host = host
       @port = port
@@ -47,21 +51,38 @@ module GremlinClient
       @gremlin_script_path = gremlin_script_path
       @gremlin_script_path = Pathname.new(@gremlin_script_path) unless @gremlin_script_path.is_a?(Pathname)
       @autoconnect = autoconnect
+      @username = user_name
+      @password = password
       connect if @autoconnect
     end
 
     # creates a new connection object
     def connect
       gremlin = self
-      WebSocket::Client::Simple.connect("ws://#{@host}:#{@port}#{@path}") do |ws|
-        @ws = ws
-
-        @ws.on :message do |msg|
+      url = "wss://#{@host}:#{@port}#{@path}"
+      puts "connecting to #{url}"
+      @ws = WebSocket::Client::Simple.connect(url) do |ws|
+        ws.on :message do |msg|
+          puts "got msg #{msg}"
+          p msg
           gremlin.receive_message(msg)
         end
 
-        @ws.on :error do |e|
-          receive_error(e)
+        ws.on :open do
+          puts "open"
+        end
+        
+        ws.on :close do |e|
+          puts "got close"
+          p e
+          puts 'closed'
+          exit 1
+        end
+
+        ws.on :error do |e|
+          puts "got error"
+          p e
+          gremlin.receive_error(e)
         end
       end
     end
@@ -72,11 +93,21 @@ module GremlinClient
     end
 
     def send_query(command, bindings={})
+      puts "send_query"
       wait_connection
+      puts "connection ok"
       reset_request
-      @ws.send(build_message(command, bindings), { type: 'text' })
+      puts "request reset"
+      msg = build_message(command, bindings)
+      puts "sending msg #{msg}"
+      bytes = [16] + ("application/json"+msg).bytes.to_a
+      p bytes
+      puts bytes.class
+      @ws.send(bytes.pack('C*'), {:type => :binary})
+      puts "sent"
       wait_response
-      return treat_response
+      puts "treating response"
+      return treat_response 
     end
 
     def send_file(filename, bindings={})
@@ -87,6 +118,7 @@ module GremlinClient
       @ws.open?
     rescue ::NoMethodError
       # #2 => it appears to happen in some situations when the situation is dropped
+      puts "no method 'open?'"
       return false
     end
 
@@ -97,7 +129,9 @@ module GremlinClient
 
     # this has to be public so the websocket client thread sees it
     def receive_message(msg)
+      puts "recieving #{msg.data}"
       response = Oj.load(msg.data)
+      p response
       # this check is important in case a request timeout and we make new ones after
       if response['requestId'] == @request_id
         if @response.nil?
@@ -122,6 +156,7 @@ module GremlinClient
           sleep 0.001
         end
         unless open?
+          puts 'not open'
           # reconnection code
           if @autoconnect && !skip_reconnect
             reconnect
@@ -154,11 +189,41 @@ module GremlinClient
         fail ::GremlinClient::ExecutionTimeoutError.new(@timeout) if @response.nil?
       end
 
+      def doAuthenticate
+        puts "Authenticating"
+        auth = Base64.encode64("\0#{@username}\0#{@password}")
+        message = {
+          requestId: @request_id,
+          op: 'authentication',
+          processor: '',
+          args: {
+            sasl: auth,
+            saslMechanism: 'PLAIN',
+          }
+        }
+        msg = Oj.dump(message, mode: :compat)
+        bytes = [16] + ("application/json"+msg).bytes.to_a
+        p bytes
+        puts bytes.class
+        @ws.send(bytes.pack('C*'), {:type => :binary})
+        puts "sent"
+        wait_response
+        puts "treating response"
+        return treat_response 
+  
+      end
       # we validate our response here to make sure it is going to be
       # raising exceptions in the right thread
       def treat_response
         # note that the partial_content status should be processed differently.
         # look at http://tinkerpop.apache.org/docs/3.0.1-incubating/ for more info
+        puts "resonse code: #{@response['status']['code']}"
+        puts STATUS[:authenticate]
+        if @response['status']['code'] == STATUS[:authenticate]
+          @response = nil
+          return doAuthenticate()
+        end
+
         ok_status = [:success, :no_content, :partial_content].map { |st| STATUS[st] }
         unless ok_status.include?(@response['status']['code'])
           fail ::GremlinClient::ServerError.new(@response['status']['code'], @response['status']['message'])
@@ -177,6 +242,7 @@ module GremlinClient
             language: 'gremlin-groovy'
           }
         }
+        puts "generating msg"
         Oj.dump(message, mode: :compat)
       end
 
