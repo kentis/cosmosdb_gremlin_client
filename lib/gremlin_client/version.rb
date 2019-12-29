@@ -1,3 +1,3 @@
-module GremliClient
-  VERSION = "0.1.6-kis"
+module CosmosDbGremlinClient
+  VERSION = "0.0.1-kis"
 end

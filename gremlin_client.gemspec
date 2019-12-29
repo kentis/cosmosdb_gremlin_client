@@ -5,12 +5,12 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require 'gremlin_client/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = "gremlin_client"
+  spec.name          = "cosmosdb_gremlin_client"
   spec.version       = GremliClient::VERSION
-  spec.authors       = ["Marcelo Coraça de Freitas"]
-  spec.email         = ["marcelo.freitas@finc.com"]
-  spec.summary       = %q{Simple Gremlin server client for the WebSocketChannelizer}
-  spec.homepage      = %q{https://github.com/marcelocf/gremlin_client}
+  spec.authors       = ["Kent Inge F. Simonsen"]
+  spec.email         = ["kent.simonsen@evry.com"]
+  spec.summary       = %q{Simple Gremlin client capable of connecting to CosmosDB}
+  spec.homepage      = %q{https://github.com/kentis/cosmosdb_gremlin_client}
   spec.license       = "Apache-2.0"
 
   spec.files         = `git ls-files`.split($/)
